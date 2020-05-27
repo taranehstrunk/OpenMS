@@ -37,92 +37,114 @@
 #include <OpenMS/CHEMISTRY/ISOTOPEDISTRIBUTION/CoarseIsotopePatternGenerator.h>
 #include <OpenMS/DATASTRUCTURES/String.h>
 
+
 namespace OpenMS
 {
 
-  IsotopeDistributionCache::IsotopeDistributionCache(double max_mass, double mass_window_width, double intensity_percentage, double intensity_percentage_optional) :
-    mass_window_width_(mass_window_width)
+  IsotopeDistributionCache::IsotopeDistributionCache():
+    mass_window_width_(20.0),
+    intensity_percentage_(0.0),
+    intensity_percentage_optional_(0.0)
   {
-    Size num_isotopes = std::ceil(max_mass / mass_window_width) + 1;
+  }
 
-    //reserve enough space
-    isotope_distributions_.resize(num_isotopes);
 
+  void IsotopeDistributionCache::precalculateDistributionCache(Size num_begin, Size index)
+  {
+    isotope_distributions_.resize(index + 1);
+    distribution_cache_.resize(index + 1);
     //calculate distribution if necessary
-    for (Size index = 0; index < num_isotopes; ++index)
+    for (Size index = num_begin; index < isotope_distributions_.size() ; ++index)
     {
       //log_ << "Calculating iso dist for mass: " << 0.5*mass_window_width_ + index * mass_window_width_ << std::endl;
       CoarseIsotopePatternGenerator solver(20);
-      auto d = solver.estimateFromPeptideWeight(0.5 * mass_window_width + index * mass_window_width);
+      auto d = solver.estimateFromPeptideWeight(0.5*mass_window_width_ + index * mass_window_width_);
+
+      distribution_cache_[index] = d;
 
       //trim left and right. And store the number of isotopes on the left, to reconstruct the monoisotopic peak
       Size size_before = d.size();
-      d.trimLeft(intensity_percentage_optional);
+      d.trimLeft(intensity_percentage_optional_);
       isotope_distributions_[index].trimmed_left = size_before - d.size();
-      d.trimRight(intensity_percentage_optional);
+      d.trimRight(intensity_percentage_optional_);
 
-      for (IsotopeDistribution::Iterator it = d.begin(); it != d.end(); ++it)
-      {
-        isotope_distributions_[index].intensity.push_back(it->getIntensity());
-        //log_ << " - " << it->second << std::endl;
-      }
 
-      //determine the number of optional peaks at the beginning/end
-      Size begin = 0;
-      Size end = 0;
-      bool is_begin = true;
-      bool is_end = false;
-      for (Size i = 0; i < isotope_distributions_[index].intensity.size(); ++i)
+      renormalize(isotope_distributions_[index], d);
+
+    }
+
+  }
+
+  void IsotopeDistributionCache::renormalize(
+           OpenMS::IsotopeDistributionCache::TheoreticalIsotopePattern& isotopes,
+           OpenMS::IsotopeDistribution& isotope_dist)
+  {
+    for (IsotopeDistribution::Iterator it = isotope_dist.begin(); it != isotope_dist.end(); ++it)
+    {
+      isotopes.intensity.push_back(it->getIntensity());
+      //log_ << " - " << it->second << std::endl;
+    }
+
+    //determine the number of optional peaks at the beginning/end
+    Size begin = 0;
+    Size end = 0;
+    bool is_begin = true;
+    bool is_end = false;
+    double max = 0.0;
+    for (Size i = 0; i < isotopes.intensity.size(); ++i)
+    {
+      if (isotopes.intensity[i] < intensity_percentage_)
       {
-        if (isotope_distributions_[index].intensity[i] < intensity_percentage)
-        {
-          if (!is_end && !is_begin)
-            is_end = true;
-          if (is_begin)
-            ++begin;
-          else if (is_end)
-            ++end;
-        }
-        else if (is_begin)
-        {
-          is_begin = false;
-        }
+        if (!is_end && !is_begin) is_end = true;
+        if (is_begin) ++begin;
+        else if (is_end) ++end;
       }
-      isotope_distributions_[index].optional_begin = begin;
-      isotope_distributions_[index].optional_end = end;
+      else if (is_begin)
+      {
+        is_begin = false;
+      }
 
       //scale the distribution to a maximum of 1
-      double max = 0.0;
-      for (Size i = 0; i < isotope_distributions_[index].intensity.size(); ++i)
+      if (isotopes.intensity[i] > max)
       {
-        if (isotope_distributions_[index].intensity[i] > max)
-        {
-          max = isotope_distributions_[index].intensity[i];
-        }
+        max = isotopes.intensity[i];
       }
+    }
+    isotopes.optional_begin = begin;
+    isotopes.optional_end = end;
 
-      isotope_distributions_[index].max = max;
+    isotopes.max = max;
 
-      for (Size i = 0; i < isotope_distributions_[index].intensity.size(); ++i)
-      {
-        isotope_distributions_[index].intensity[i] /= max;
-      }
+    for (Size i = 0; i < isotopes.intensity.size(); ++i)
+    {
+      isotopes.intensity[i] /= max;
     }
   }
 
   // Returns the isotope distribution for a certain mass window
-  const IsotopeDistributionCache::TheoreticalIsotopePattern& IsotopeDistributionCache::getIsotopeDistribution(double mass) const
+  const IsotopeDistributionCache::TheoreticalIsotopePattern& IsotopeDistributionCache::getIsotopeDistribution(double mass)
   {
-    //calculate index in the vector
-    Size index = static_cast<Size>(std::floor(mass / mass_window_width_));
-
+    Size index = Size (std::floor(mass/mass_window_width_));
     if (index >= isotope_distributions_.size())
     {
-      throw Exception::InvalidValue(__FILE__, __LINE__, OPENMS_PRETTY_FUNCTION, "IsotopeDistribution not precalculated. Maximum allowed index is " + String(isotope_distributions_.size()), String(index));
+      precalculateDistributionCache(isotope_distributions_.size(), index);
     }
 
     //Return distribution
-    return isotope_distributions_[index];
+    return isotope_distributions_[(int)index];
+  }
+
+  //Return the intensity for a mass
+  const IsotopeDistribution& IsotopeDistributionCache::getIntensity(double mass)
+  {
+    Size index = Size (std::floor(mass/mass_window_width_));
+    if (index >= distribution_cache_.size())
+    {
+      precalculateDistributionCache(distribution_cache_.size(), index);
+    }
+
+    //Return intensity
+    return distribution_cache_[(int)index];
   }
 
 }

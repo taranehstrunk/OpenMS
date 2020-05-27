@@ -123,7 +123,8 @@ START_SECTION ( testscorefunction)
 
   DiaPrescore diaprescore(0.05);
   double manhattan = 0., dotprod = 0.;
-  diaprescore.score(sptr, transitions , dotprod, manhattan);
+  IsotopeDistributionCache isotope_cache;
+  diaprescore.score(isotope_cache, sptr, transitions , dotprod, manhattan);
   //std::cout << "dotprod : " << dotprod << std::endl;
   //std::cout << "manhattan : " << manhattan << std::endl;
   // >> exp = [240, 74, 39, 15, 0]
